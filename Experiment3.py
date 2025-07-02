@@ -235,25 +235,23 @@ def plot_brain_region_activations(user_summary, system_summary):
     df_user = pd.DataFrame(list(user_data.items()), columns=['Region', 'USER'])
     df_system = pd.DataFrame(list(system_data.items()), columns=['Region', 'SYSTEM'])
     df = pd.merge(df_user, df_system, on='Region', how='outer').fillna(0)
+    df['Region'] = df['Region'].str.replace('_', ' ').str.title()
+    df = df[(df['USER'] > 0) | (df['SYSTEM'] > 0)]
     df = df.sort_values(by='USER', ascending=True)
     plt.style.use('seaborn-v0_8-whitegrid')
     fig, ax = plt.subplots(figsize=(12, 14))
     y_pos = np.arange(len(df['Region']))
-    height = 0.4
-    bar1 = ax.barh(y_pos + height/2, df['USER'], height, label='USER', color='#2E86C1')
-    bar2 = ax.barh(y_pos - height/2, df['SYSTEM'], height, label='SYSTEM', color='#AF7AC5')
+    height = 0.35
+    bar1 = ax.barh(y_pos - height / 2, df['USER'], height, label='USER', color="#1492E6")
+    bar2 = ax.barh(y_pos + height / 2, df['SYSTEM'], height, label='SYSTEM', color="#33DA57")
+    
     ax.set_yticks(y_pos)
-    ax.set_yticklabels(df['Region'], fontsize=10)
+    ax.set_yticklabels(df['Region'], fontsize=10, fontweight='bold')
     ax.set_xlabel('Number of Activations (Instances)', fontsize=12, fontweight='bold')
     ax.set_ylabel('Brain Region', fontsize=12, fontweight='bold')
     ax.set_title('Comparison of Brain Region Activations: USER vs. SYSTEM', fontsize=16, fontweight='bold')
     ax.legend()
     ax.invert_yaxis()
-    for i, (p_user, p_system) in enumerate(zip(df['USER'], df['SYSTEM'])):
-        if p_user > 0:
-            ax.text(p_user + 1, i + height/2, str(int(p_user)), va='center', ha='left', fontsize=9)
-        if p_system > 0:
-            ax.text(p_system + 1, i - height/2, str(int(p_system)), va='center', ha='left', fontsize=9)
     ax.grid(axis='x', linestyle='--', alpha=0.7)
     ax.grid(axis='y', linestyle='', alpha=0.7)
     plt.tight_layout()
@@ -300,3 +298,5 @@ if __name__ == "__main__":
         user_metrics = {'range': user_emotion_range, 'intensity': user_avg_intensity}
         system_metrics = {'range': system_emotion_range, 'intensity': system_avg_intensity}
         plot_brain_region_activations(user_summary, system_summary)
+
+    input("\nPress Enter to exit...")
