@@ -6,39 +6,80 @@ import re
 import numpy as np
 import pandas as pd
 from typing import List, Dict, Optional, Tuple
-import matplotlib.pyplot as plt
-import seaborn as sns
 from openai import OpenAI
 from scipy.spatial.distance import cdist
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
+from scipy import stats
+from sklearn.utils import resample
 
-
-def plot_comparison_charts(pos_intensities: np.ndarray, pos_assignments: np.ndarray,
-                           neg_intensities: np.ndarray, neg_assignments: np.ndarray,
-                           region_names: list):
-
-    sns.set_theme(style="whitegrid")
-    df_pos = pd.DataFrame({'intensity': pos_intensities, 'region_idx': pos_assignments, 'group': 'Healthy'})
-    df_neg = pd.DataFrame({'intensity': neg_intensities, 'region_idx': neg_assignments, 'group': 'Depressed'})
-    df_combined = pd.concat([df_pos, df_neg], ignore_index=True)
-    df_combined['region_name'] = df_combined['region_idx'].apply(lambda x: region_names[x].replace('_', ' ').title())
-    plt.figure(figsize=(14, 10))
-    ax1 = plt.subplot(2, 1, 1)
-    sns.countplot(data=df_combined, y='region_name', hue='group', ax=ax1, palette={'Healthy': 'skyblue', 'Depressed': 'salmon'})
-    ax1.set_title('Comparison of Activation Counts per Brain Region', fontsize=16, fontweight='bold')
-    ax1.set_xlabel('Number of Associated Texts', fontsize=12)
-    ax1.set_ylabel('Brain Region', fontsize=12)
-    ax1.legend(title='Group')
-    plt.tight_layout()
-    plt.show(block=False)
+def perform_statistical_tests(pos_intensities, pos_assignments, neg_intensities, neg_assignments, region_names):
+    # oversample the minority class
+    if len(pos_intensities) < len(neg_intensities):
+        pos_intensities_resampled = resample(pos_intensities, 
+                                           replace=True, 
+                                           n_samples=len(neg_intensities), 
+                                           random_state=42)
+        pos_assignments_resampled = resample(pos_assignments, 
+                                           replace=True, 
+                                           n_samples=len(neg_assignments), 
+                                           random_state=42)
+        neg_intensities_resampled = neg_intensities
+        neg_assignments_resampled = neg_assignments
+    else:
+        neg_intensities_resampled = resample(neg_intensities, 
+                                           replace=True, 
+                                           n_samples=len(pos_intensities), 
+                                           random_state=42)
+        neg_assignments_resampled = resample(neg_assignments, 
+                                           replace=True, 
+                                           n_samples=len(pos_assignments), 
+                                           random_state=42)
+        pos_intensities_resampled = pos_intensities
+        pos_assignments_resampled = pos_assignments
+    
+    u_stat, p_value = stats.mannwhitneyu(pos_intensities_resampled, neg_intensities_resampled, alternative='two-sided')
+    print(f"Healthy mean: {np.mean(pos_intensities_resampled):.4f} ± {np.std(pos_intensities_resampled):.4f}")
+    print(f"Depressed mean: {np.mean(neg_intensities_resampled):.4f} ± {np.std(neg_intensities_resampled):.4f}")
+    print(f"Mann-Whitney U statistic: {u_stat:.4f}, p-value: {p_value:.6f}")
+    print(f"Significant: {'YES' if p_value < 0.05 else 'NO'} (alpha = 0.05)")
+    
+    significant_regions = []
+    
+    for region_idx in range(len(region_names)):
+        pos_region_mask = pos_assignments_resampled == region_idx
+        neg_region_mask = neg_assignments_resampled == region_idx
+        pos_region_intensities = pos_intensities_resampled[pos_region_mask]
+        neg_region_intensities = neg_intensities_resampled[neg_region_mask]
+        
+        if len(pos_region_intensities) > 1 and len(neg_region_intensities) > 1:
+            try:
+                u_stat_region, p_value_region = stats.mannwhitneyu(pos_region_intensities, neg_region_intensities, alternative='two-sided')
+                region_name = region_names[region_idx].replace('_', ' ').title()
+                
+                print(f"{region_name}:")
+                print(f"Healthy: {len(pos_region_intensities)} texts, mean: {np.mean(pos_region_intensities):.4f}")
+                print(f"Depressed: {len(neg_region_intensities)} texts, mean: {np.mean(neg_region_intensities):.4f}")
+                print(f"Mann-Whitney U: {u_stat_region:.4f}, p-value: {p_value_region:.6f}")
+                
+                if p_value_region < 0.05:
+                    significant_regions.append(region_name)
+                    print(f"    *** SIGNIFICANT ***")
+            except ValueError:
+                continue
+    
+    print(f"Regions with significant differences ({len(significant_regions)}):")
+    for region in significant_regions:
+        print(f"  - {region}")
+    
+    return pos_intensities_resampled, neg_intensities_resampled
 
 
 def get_ada_embeddings(texts: List[str]) -> Optional[np.ndarray]:
     api_key = "your open-ai api key here"
     if not api_key:
-        print("Missing OpenAI API Key...") 
+        print("Missing OpenAI API Key...")
         return None
     try:
         client = OpenAI(api_key=api_key)
@@ -100,6 +141,7 @@ class EmotionBrainMapper:
         
         n_samples, n_features = embeddings.shape
         n_components = min(3, n_samples, n_features)
+        
         if n_components < 3:
             self.pca = PCA(n_components=n_components)
             
@@ -109,7 +151,7 @@ class EmotionBrainMapper:
         if embeddings_3d.shape[1] < 3:
             padding = np.zeros((embeddings_3d.shape[0], 3 - embeddings_3d.shape[1]))
             embeddings_3d = np.hstack([embeddings_3d, padding])
-
+        
         n_clusters = min(self.n_emotion_regions, embeddings.shape[0])
         if n_clusters != self.n_emotion_regions:
             kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
@@ -138,52 +180,58 @@ class EmotionBrainMapper:
 
     def estimate_emotion_intensity(self, texts: List[str]) -> np.ndarray:
         word_scores = {
-            # Extreme Positive
-            'absolutely': 1.0, 'incredibly': 1.0, 'magnificently': 1.0, 'phenomenally': 1.0,
-            'ecstatic': 1.0, 'euphoric': 1.0, 'elated': 1.0, 'jubilant': 1.0, 'divine': 1.0,
-            'wonderful': 1.0, 'happiness': 1.0, 'joy': 1.0, 'active': 1.0, 'sports': 1.0, 
-            'optimistic': 1.0, 'successful': 1.0, 'outgoing': 1.0,
-            # Extreme Negative
-            'devastated': 1.0, 'destroyed': 1.0, 'shattered': 1.0, 'furious': 1.0,
-            'enraged': 1.0, 'livid': 1.0, 'terrified': 1.0, 'horrifyingly': 1.0,
-            'depressed': 1.0, 'psychiatrist': 1.0, 'exhausted': 1.0, 'crying': 1.0, 
-            'extremely': 1.0, 'losing': 1.0, 'uncomfortable': 1.0, 'mental': 1.0,
-            # Very Positive
-            'amazing': 0.8, 'awesome': 0.8, 'fantastic': 0.8, 'wonderful': 0.8,
-            'superb': 0.8, 'excellent': 0.8, 'brilliantly': 0.8,
-            # Very Negative
-            'hate': 0.8, 'despise': 0.8, 'loathe': 0.8, 'terrible': 0.8,
-            'horrible': 0.8, 'awful': 0.8, 'dreadful': 0.8,
-            # Positive
-            'love': 0.6, 'adore': 0.6, 'happy': 0.6, 'glad': 0.6, 'pleased': 0.6, 'joyfully': 0.6,
-            'great': 0.6, 'encouragingly': 0.6, 'fortunately': 0.6,
-            # Negative
-            'sad': 0.6, 'unhappy': 0.6, 'disappointed': 0.6, 'frustrated': 0.6,
-            'angry': 0.6, 'miserably': 0.6, 'sadly': 0.6,
+            # Strong Positive (Healthy)
+            'ecstatic': 1.0, 'euphoric': 1.0, 'elated': 1.0, 'jubilant': 1.0, 'thrilled': 1.0,
+            'radiant': 1.0, 'joy': 1.0, 'passionate': 1.0, 'laughing': 1.0, 'motivated': 1.0,
+            'grateful': 0.9, 'proud': 0.9, 'accomplished': 0.9,
+
+            # Strong Negative (Depressed)
+            'depressed': 1.2, 'suicidal': 1.2, 'worthless': 1.1, 'hopeless': 1.1, 'exhausted': 1.0,
+            'isolated': 1.0, 'crying': 1.0, 'numb': 1.0, 'anxious': 0.9, 'fatigue': 0.9,
+            'useless': 1.1, 'empty': 1.0, 'alone': 1.0, 'miserable': 1.0,
+
+            # Moderate Positive
+            'happy': 0.8, 'love': 0.8, 'excited': 0.8, 'smiling': 0.8, 'hopeful': 0.7, 'peaceful': 0.7,
+
+            # Moderate Negative
+            'sad': 0.8, 'angry': 0.8, 'upset': 0.7, 'irritated': 0.7, 'stressed': 0.7, 
+            'worried': 0.7, 'nervous': 0.7, 'lonely': 0.8,
+
             # Mild Positive
-            'okay': 0.3, 'fine': 0.3, 'decent': 0.3, 'nice': 0.3, 'good': 0.3, 'cool': 0.3,
+            'okay': 0.3, 'fine': 0.3, 'good': 0.4, 'cool': 0.3, 'calm': 0.3,
+
             # Mild Negative
-            'bad': 0.3, 'poor': 0.3, 'weak': 0.3, 'boring': 0.3
+            'bad': 0.4, 'tired': 0.4, 'meh': 0.3, 'bored': 0.3, 'blah': 0.3,
+
+            # Intensifiers
+            'absolutely': 0.3, 'incredibly': 0.3, 'completely': 0.3, 'extremely': 0.3,
+            'totally': 0.3, 'really': 0.2, 'very': 0.2
         }
-        
+
+        polarity_neg = {'depressed', 'hopeless', 'suicidal', 'crying', 'fatigue', 'worthless', 'alone', 'empty'}
+        polarity_pos = {'ecstatic', 'joy', 'grateful', 'proud', 'hopeful', 'happy', 'love'}
+
         intensities = []
         for text in texts:
-            intensity = 0.1
+            intensity = 0.1  # Base value
             text_lower = text.lower()
             words = re.findall(r'\b\w+\b', text_lower)
 
+            word_intensity = 0.0
+            polarity_score = 0.0
+
             for word in words:
-                intensity += word_scores.get(word, 0)
+                word_score = word_scores.get(word, 0.0)
+                word_intensity += word_score
 
-            if any(mod in words for mod in ['so', 'very', 'really', 'truly', 'completely', 'totally']):
-                intensity += 0.3
-            if any(mod in words for mod in ['never', 'always', 'everything', 'nothing']):
-                intensity += 0.2
+                if word in polarity_pos:
+                    polarity_score += 0.5
+                elif word in polarity_neg:
+                    polarity_score -= 0.5
 
-            intensity += 0.25 * min(text.count('!'), 4)
-            intensity += 0.15 * min(text.count('?'), 3)
-            if text.isupper() and len(text) > 3:
-                intensity += 0.5
+            if -0.5 < polarity_score < 0.5 and word_intensity > 0.5:
+                intensity *= 0.75  # dampen ambiguous emotion
+            
             intensities.append(min(intensity, 2.0))
         return np.array(intensities)
 
@@ -197,9 +245,7 @@ def run_emotion_mapping_analysis(title: str, conversation: List[str]):
     mapper = EmotionBrainMapper()
     brain_coords, region_assignments = mapper.fit_transform_embeddings(embeddings)
     emotion_intensities = mapper.estimate_emotion_intensity(conversation)
-
-    # the results below are used in the 3D visualization, copy and paste:
-    print(f"{title} Emotion Intensities: {np.round(emotion_intensities, 2)}")
+    print(f"\n{title} Emotion Intensities: {np.round(emotion_intensities, 2)}")
     return mapper, embeddings, emotion_intensities, region_assignments, brain_coords
 
 
@@ -213,14 +259,12 @@ if __name__ == "__main__":
     pos_mapper, pos_embeddings, pos_intensities, pos_assignments, pos_coords = pos_results if pos_results else (None,)*5
     neg_mapper, neg_embeddings, neg_intensities, neg_assignments, neg_coords = neg_results if neg_results else (None,)*5
 
-    if pos_results and neg_results:
-        all_region_names = list(pos_mapper.emotion_regions.keys())
-        plot_comparison_charts(
-            pos_intensities, 
-            pos_assignments, 
-            neg_intensities, 
-            neg_assignments, 
-            all_region_names
-        )
-
-    input("\nPress Enter to exit...")
+if pos_results and neg_results:
+    all_region_names = list(pos_mapper.emotion_regions.keys())
+    pos_intensities_resampled, neg_intensities_resampled = perform_statistical_tests(
+        pos_intensities, 
+        pos_assignments, 
+        neg_intensities, 
+        neg_assignments, 
+        all_region_names
+    )

@@ -30,6 +30,70 @@ from scipy.spatial.distance import cdist
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
+from scipy import stats
+from sklearn.utils import resample
+
+def perform_statistical_tests(pos_intensities, pos_assignments, neg_intensities, neg_assignments, region_names):
+    # oversample the minority class
+    if len(pos_intensities) < len(neg_intensities):
+        pos_intensities_resampled = resample(pos_intensities, 
+                                           replace=True, 
+                                           n_samples=len(neg_intensities), 
+                                           random_state=42)
+        pos_assignments_resampled = resample(pos_assignments, 
+                                           replace=True, 
+                                           n_samples=len(neg_assignments), 
+                                           random_state=42)
+        neg_intensities_resampled = neg_intensities
+        neg_assignments_resampled = neg_assignments
+    else:
+        neg_intensities_resampled = resample(neg_intensities, 
+                                           replace=True, 
+                                           n_samples=len(pos_intensities), 
+                                           random_state=42)
+        neg_assignments_resampled = resample(neg_assignments, 
+                                           replace=True, 
+                                           n_samples=len(pos_assignments), 
+                                           random_state=42)
+        pos_intensities_resampled = pos_intensities
+        pos_assignments_resampled = pos_assignments
+    
+    u_stat, p_value = stats.mannwhitneyu(pos_intensities_resampled, neg_intensities_resampled, alternative='two-sided')
+    print(f"Human mean: {np.mean(pos_intensities_resampled):.4f} ± {np.std(pos_intensities_resampled):.4f}")
+    print(f"LLM mean: {np.mean(neg_intensities_resampled):.4f} ± {np.std(neg_intensities_resampled):.4f}")
+    print(f"Mann-Whitney U statistic: {u_stat:.4f}, p-value: {p_value:.6f}")
+    print(f"Significant: {'YES' if p_value < 0.05 else 'NO'} (α = 0.05)")
+
+    significant_regions = []
+    
+    for region_idx in range(len(region_names)):
+        pos_region_mask = pos_assignments_resampled == region_idx
+        neg_region_mask = neg_assignments_resampled == region_idx
+        pos_region_intensities = pos_intensities_resampled[pos_region_mask]
+        neg_region_intensities = neg_intensities_resampled[neg_region_mask]
+        
+        if len(pos_region_intensities) > 1 and len(neg_region_intensities) > 1:
+            # Mann-Whitney U test for robustness against precision issues
+            try:
+                u_stat_region, p_value_region = stats.mannwhitneyu(pos_region_intensities, neg_region_intensities, alternative='two-sided')
+                region_name = region_names[region_idx].replace('_', ' ').title()
+                
+                print(f"  {region_name}:")
+                print(f"    Human: {len(pos_region_intensities)} texts, mean: {np.mean(pos_region_intensities):.4f}")
+                print(f"    LLM: {len(neg_region_intensities)} texts, mean: {np.mean(neg_region_intensities):.4f}")
+                print(f"    Mann-Whitney U: {u_stat_region:.4f}, p-value: {p_value_region:.6f}")
+                
+                if p_value_region < 0.05:
+                    significant_regions.append(region_name)
+                    print(f"    *** SIGNIFICANT ***")
+            except ValueError:
+                continue
+    
+    print(f"Regions with significant differences ({len(significant_regions)}):")
+    for region in significant_regions:
+        print(f"  - {region}")
+    
+    return pos_intensities_resampled, neg_intensities_resampled
 
 
 def get_ada_embeddings(texts: List[str]) -> Optional[np.ndarray]:
@@ -57,8 +121,6 @@ def get_ada_embeddings(texts: List[str]) -> Optional[np.ndarray]:
         return np.array(all_embeddings)
     except Exception as e:
         print(f"Error generating ADA embeddings: {e}")
-        if 'max_tokens_per_request' in str(e):
-             print("Adjust chunk size smaller...")
         return None
 
 
@@ -176,7 +238,6 @@ def run_emotion_mapping_analysis(title: str, conversation: List[str]):
     mapper = EmotionBrainMapper(n_emotion_regions=25)
     brain_coords, region_assignments = mapper.fit_transform_embeddings(embeddings)
     emotion_intensities = mapper.estimate_emotion_intensity(conversation)
-
     region_names = list(mapper.emotion_regions.keys())
     
     region_summary = {name: {'count': 0, 'intensities': []} for name in region_names}
@@ -190,7 +251,6 @@ def run_emotion_mapping_analysis(title: str, conversation: List[str]):
         if count > 0:
             avg_intensity = np.mean(data['intensities'])
             print(f"{region_name}: {count} instance(s) (avg intensity: {avg_intensity:.3f})")
-
     return mapper, embeddings, emotion_intensities, region_assignments, region_summary
 
 
@@ -214,7 +274,7 @@ def plot_brain_region_activations(user_summary, system_summary):
     ax.set_yticklabels(df['Region'], fontsize=10, fontweight='bold')
     ax.set_xlabel('Number of Activations (Instances)', fontsize=12, fontweight='bold')
     ax.set_ylabel('Brain Region', fontsize=12, fontweight='bold')
-    ax.set_title('Comparison of Brain Region Activations: Human vs. LLM', fontsize=16, fontweight='bold')
+    ax.set_title('Comparison of Brain Region Activations: USER vs. SYSTEM', fontsize=16, fontweight='bold')
     ax.legend()
     ax.invert_yaxis()
     ax.grid(axis='x', linestyle='--', alpha=0.7)
@@ -225,40 +285,41 @@ def plot_brain_region_activations(user_summary, system_summary):
 
 
 if __name__ == "__main__":
-    try:
-        df = pd.read_csv('BrainEmbeddings/dstc8.csv')
-        df['Text'] = df['Text'].str.replace('"', '', regex=False).str.strip()
-        df.dropna(subset=['Text'], inplace=True)
-        user_texts = df[df['Input'] == 'USER']['Text'].tolist()[1:10000]
-        system_texts = df[df['Input'] == 'SYSTEM']['Text'].tolist()[1:10000]
-    except FileNotFoundError:
-        print("Data file not found.")
-        sys.exit(1)
-    except Exception as e:
-        print(f"An error occurred while loading the data: {e}")
-        sys.exit(1)
+    df = pd.read_csv('BrainEmbeddings/dstc8.csv')
+    df['Text'] = df['Text'].str.replace('"', '', regex=False).str.strip()
+    df.dropna(subset=['Text'], inplace=True)
+    user_texts = df[df['Input'] == 'USER']['Text'].tolist()[1:10000]
+    system_texts = df[df['Input'] == 'SYSTEM']['Text'].tolist()[1:10000]
 
     user_results = run_emotion_mapping_analysis("USER", user_texts)
     _, _, user_intensities, _, user_summary = user_results if user_results else (None,) * 5
     system_results = run_emotion_mapping_analysis("SYSTEM", system_texts)
     _, _, system_intensities, _, system_summary = system_results if system_results else (None,) * 5
 
+    pos_mapper, pos_embeddings, pos_intensities, pos_assignments, pos_coords = user_results if user_results else (None,)*5
+    neg_mapper, neg_embeddings, neg_intensities, neg_assignments, neg_coords = system_results if system_results else (None,)*5
+
     if user_summary and system_summary and user_intensities is not None and system_intensities is not None:
+        all_region_names = list(pos_mapper.emotion_regions.keys())
+        pos_intensities_resampled, neg_intensities_resampled = perform_statistical_tests(
+            pos_intensities, 
+            pos_assignments, 
+            neg_intensities, 
+            neg_assignments, 
+            all_region_names
+        )
         user_emotion_range = sum(1 for data in user_summary.values() if data['count'] > 0)
         system_emotion_range = sum(1 for data in system_summary.values() if data['count'] > 0)
         user_avg_intensity = np.mean(user_intensities)
         system_avg_intensity = np.mean(system_intensities)
-
-        print("Human vs. LLM")
+        print("EMOTIONALITY ANALYSIS: Human vs. LLM:")
         print(f"Emotion Range (Unique Regions Activated):")
         print(f"  - Human:   {user_emotion_range} regions")
         print(f"  - LLM: {system_emotion_range} regions")
         print("Average Emotion Intensity:")
         print(f"  - Human:   {user_avg_intensity:.3f}")
         print(f"  - LLM: {system_avg_intensity:.3f}")
-
         user_metrics = {'range': user_emotion_range, 'intensity': user_avg_intensity}
         system_metrics = {'range': system_emotion_range, 'intensity': system_avg_intensity}
         plot_brain_region_activations(user_summary, system_summary)
 
-    input("\nPress Enter to exit...")
