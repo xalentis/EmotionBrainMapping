@@ -33,8 +33,9 @@ from sklearn.cluster import KMeans
 from scipy import stats
 from sklearn.utils import resample
 
+
 def perform_statistical_tests(pos_intensities, pos_assignments, neg_intensities, neg_assignments, region_names):
-    # oversample the minority class
+    # Oversample the minority class
     if len(pos_intensities) < len(neg_intensities):
         pos_intensities_resampled = resample(pos_intensities, 
                                            replace=True, 
@@ -58,12 +59,16 @@ def perform_statistical_tests(pos_intensities, pos_assignments, neg_intensities,
         pos_intensities_resampled = pos_intensities
         pos_assignments_resampled = pos_assignments
     
+    # Calculate overall statistics
     u_stat, p_value = stats.mannwhitneyu(pos_intensities_resampled, neg_intensities_resampled, alternative='two-sided')
     print(f"Human mean: {np.mean(pos_intensities_resampled):.4f} ± {np.std(pos_intensities_resampled):.4f}")
     print(f"LLM mean: {np.mean(neg_intensities_resampled):.4f} ± {np.std(neg_intensities_resampled):.4f}")
     print(f"Mann-Whitney U statistic: {u_stat:.4f}, p-value: {p_value:.6f}")
     print(f"Significant: {'YES' if p_value < 0.05 else 'NO'} (α = 0.05)")
-
+    
+    # Calculate regional means - this is the key output for visualization
+    human_regional_means = []
+    llm_regional_means = []
     significant_regions = []
     
     for region_idx in range(len(region_names)):
@@ -72,35 +77,43 @@ def perform_statistical_tests(pos_intensities, pos_assignments, neg_intensities,
         pos_region_intensities = pos_intensities_resampled[pos_region_mask]
         neg_region_intensities = neg_intensities_resampled[neg_region_mask]
         
-        if len(pos_region_intensities) > 1 and len(neg_region_intensities) > 1:
-            # Mann-Whitney U test for robustness against precision issues
-            try:
-                u_stat_region, p_value_region = stats.mannwhitneyu(pos_region_intensities, neg_region_intensities, alternative='two-sided')
-                region_name = region_names[region_idx].replace('_', ' ').title()
-                
-                print(f"  {region_name}:")
-                print(f"    Human: {len(pos_region_intensities)} texts, mean: {np.mean(pos_region_intensities):.4f}")
-                print(f"    LLM: {len(neg_region_intensities)} texts, mean: {np.mean(neg_region_intensities):.4f}")
-                print(f"    Mann-Whitney U: {u_stat_region:.4f}, p-value: {p_value_region:.6f}")
-                
-                if p_value_region < 0.05:
-                    significant_regions.append(region_name)
-                    print(f"    *** SIGNIFICANT ***")
-            except ValueError:
-                continue
+        if len(pos_region_intensities) > 0 and len(neg_region_intensities) > 0:
+            human_mean = np.mean(pos_region_intensities)
+            llm_mean = np.mean(neg_region_intensities)
+            
+            human_regional_means.append(human_mean)
+            llm_regional_means.append(llm_mean)
+            
+            region_name = region_names[region_idx].replace('_', ' ').title()
+            
+            print(f"  {region_name}:")
+            print(f"    Human: {len(pos_region_intensities)} texts, mean: {human_mean:.4f}")
+            print(f"    LLM: {len(neg_region_intensities)} texts, mean: {llm_mean:.4f}")
+            
+            if len(pos_region_intensities) > 1 and len(neg_region_intensities) > 1:
+                try:
+                    u_stat_region, p_value_region = stats.mannwhitneyu(pos_region_intensities, neg_region_intensities, alternative='two-sided')
+                    print(f"    Mann-Whitney U: {u_stat_region:.4f}, p-value: {p_value_region:.6f}")
+                    
+                    if p_value_region < 0.05:
+                        significant_regions.append(region_name)
+                        print(f"    *** SIGNIFICANT ***")
+                except ValueError:
+                    continue
+        else:
+            # Use baseline values for regions with no data
+            human_regional_means.append(0.1)
+            llm_regional_means.append(0.1)
     
-    print(f"Regions with significant differences ({len(significant_regions)}):")
+    print(f"\nRegions with significant differences ({len(significant_regions)}):")
     for region in significant_regions:
         print(f"  - {region}")
     
-    return pos_intensities_resampled, neg_intensities_resampled
+    return np.array(human_regional_means), np.array(llm_regional_means), significant_regions
 
 
 def get_ada_embeddings(texts: List[str]) -> Optional[np.ndarray]:
     api_key = "your open-ai api key here"
-    if not api_key:
-        print("Missing OpenAI API Key...")
-        return None
     
     all_embeddings = []
     batch_size = 2000
@@ -125,29 +138,43 @@ def get_ada_embeddings(texts: List[str]) -> Optional[np.ndarray]:
 
 
 class EmotionBrainMapper:
-    def __init__(self, n_emotion_regions=25):
-        self.n_emotion_regions = n_emotion_regions
+    def __init__(self):
         self.emotion_regions = self.define_emotion_regions()
+        self.n_emotion_regions = len(self.emotion_regions)
         self.scaler = StandardScaler()
         self.pca = PCA(n_components=3)
-        self.kmeans = KMeans(n_clusters=n_emotion_regions, random_state=42, n_init=10)
+        self.kmeans = KMeans(n_clusters=self.n_emotion_regions, random_state=42, n_init=10)
 
     def define_emotion_regions(self) -> Dict[str, List[float]]:
         return {
-            'amygdala_left': [-20, -5, -18], 'amygdala_right': [20, -5, -18],
-            'anterior_cingulate_left': [-5, 25, 25], 'anterior_cingulate_right': [5, 25, 25],
-            'insula_left': [-40, 8, 0], 'insula_right': [40, 8, 0],
-            'orbitofrontal_left': [-25, 40, -15], 'orbitofrontal_right': [25, 40, -15],
-            'hippocampus_left': [-25, -15, -20], 'hippocampus_right': [25, -15, -20],
-            'prefrontal_cortex_left': [-45, 30, 30], 'prefrontal_cortex_right': [45, 30, 30],
-            'temporal_pole_left': [-40, 20, -25], 'temporal_pole_right': [40, 20, -25],
-            'superior_temporal_left': [-55, -25, 10], 'superior_temporal_right': [55, -25, 10],
-            'caudate_left': [-12, 12, 8], 'caudate_right': [12, 12, 8],
-            'putamen_left': [-25, 5, 0], 'putamen_right': [25, 5, 0],
-            'nucleus_accumbens_left': [-8, 8, -8], 'nucleus_accumbens_right': [8, 8, -8],
-            'hypothalamus': [0, -2, -15], 'periaqueductal_gray': [0, -28, -10],
-            'ventral_tegmental_area': [0, -15, -20], 'raphe_nuclei': [0, -25, -30],
-            'locus_coeruleus': [0, -37, -28], 'posterior_cingulate': [0, -50, 25],
+            'amygdala_left': [-20, -5, -18], 
+            'amygdala_right': [20, -5, -18],
+            'anterior_cingulate_left': [-5, 25, 25], 
+            'anterior_cingulate_right': [5, 25, 25],
+            'insula_left': [-40, 8, 0], 
+            'insula_right': [40, 8, 0],
+            'orbitofrontal_left': [-25, 40, -15], 
+            'orbitofrontal_right': [25, 40, -15],
+            'hippocampus_left': [-25, -15, -20], 
+            'hippocampus_right': [25, -15, -20],
+            'prefrontal_cortex_left': [-45, 30, 30], 
+            'prefrontal_cortex_right': [45, 30, 30],
+            'temporal_pole_left': [-40, 20, -25], 
+            'temporal_pole_right': [40, 20, -25],
+            'superior_temporal_left': [-55, -25, 10], 
+            'superior_temporal_right': [55, -25, 10],
+            'caudate_left': [-12, 12, 8], 
+            'caudate_right': [12, 12, 8],
+            'putamen_left': [-25, 5, 0], 
+            'putamen_right': [25, 5, 0],
+            'nucleus_accumbens_left': [-8, 8, -8], 
+            'nucleus_accumbens_right': [8, 8, -8],
+            'hypothalamus': [0, -2, -15], 
+            'periaqueductal_gray': [0, -28, -10],
+            'ventral_tegmental_area': [0, -15, -20], 
+            'raphe_nuclei': [0, -25, -30],
+            'locus_coeruleus': [0, -37, -28], 
+            'posterior_cingulate': [0, -50, 25],
             'medial_prefrontal_cortex': [0, 45, 20]
         }
 
@@ -228,98 +255,124 @@ class EmotionBrainMapper:
 
 def run_emotion_mapping_analysis(title: str, conversation: List[str]):
     if not conversation:
-        return None, None, None, None, None
-
+        return None
+    
     np.random.seed(42)
     embeddings = get_ada_embeddings(conversation)
     if embeddings is None:
-        return None, None, None, None, None
+        return None
 
-    mapper = EmotionBrainMapper(n_emotion_regions=25)
+    mapper = EmotionBrainMapper()
     brain_coords, region_assignments = mapper.fit_transform_embeddings(embeddings)
     emotion_intensities = mapper.estimate_emotion_intensity(conversation)
-    region_names = list(mapper.emotion_regions.keys())
     
-    region_summary = {name: {'count': 0, 'intensities': []} for name in region_names}
-    for i, region_idx in enumerate(region_assignments):
-        region_name = region_names[region_idx]
-        region_summary[region_name]['count'] += 1
-        region_summary[region_name]['intensities'].append(emotion_intensities[i])
-
-    for region_name, data in sorted(region_summary.items()):
-        count = data['count']
-        if count > 0:
-            avg_intensity = np.mean(data['intensities'])
-            print(f"{region_name}: {count} instance(s) (avg intensity: {avg_intensity:.3f})")
-    return mapper, embeddings, emotion_intensities, region_assignments, region_summary
+    print(f"\n{title} Emotion Intensities: {np.round(emotion_intensities, 2)}")
+    return mapper, emotion_intensities, region_assignments
 
 
-def plot_brain_region_activations(user_summary, system_summary):
-    user_data = {region: data['count'] for region, data in user_summary.items()}
-    system_data = {region: data['count'] for region, data in system_summary.items()}
-    df_user = pd.DataFrame(list(user_data.items()), columns=['Region', 'USER'])
-    df_system = pd.DataFrame(list(system_data.items()), columns=['Region', 'SYSTEM'])
-    df = pd.merge(df_user, df_system, on='Region', how='outer').fillna(0)
-    df['Region'] = df['Region'].str.replace('_', ' ').str.title()
-    df = df[(df['USER'] > 0) | (df['SYSTEM'] > 0)]
-    df = df.sort_values(by='USER', ascending=True)
-    plt.style.use('seaborn-v0_8-whitegrid')
-    fig, ax = plt.subplots(figsize=(12, 14))
-    y_pos = np.arange(len(df['Region']))
-    height = 0.35
-    bar1 = ax.barh(y_pos - height / 2, df['USER'], height, label='USER', color="#1492E6")
-    bar2 = ax.barh(y_pos + height / 2, df['SYSTEM'], height, label='SYSTEM', color="#33DA57")
+def create_differences_bar_plot(human_values: np.ndarray, llm_values: np.ndarray, 
+                               region_names: List[str], significant_regions: List[str]):
+
+    differences = human_values - llm_values
+    SCALE_FACTOR = 50.0
+    scaled_differences = differences * SCALE_FACTOR
+    non_zero_mask = np.abs(scaled_differences) > 1e-6
+    if not np.any(non_zero_mask):
+        print("No non-zero differences found!")
+        return None, None
     
-    ax.set_yticks(y_pos)
-    ax.set_yticklabels(df['Region'], fontsize=10, fontweight='bold')
-    ax.set_xlabel('Number of Activations (Instances)', fontsize=12, fontweight='bold')
-    ax.set_ylabel('Brain Region', fontsize=12, fontweight='bold')
-    ax.set_title('Comparison of Brain Region Activations: USER vs. SYSTEM', fontsize=16, fontweight='bold')
-    ax.legend()
-    ax.invert_yaxis()
-    ax.grid(axis='x', linestyle='--', alpha=0.7)
-    ax.grid(axis='y', linestyle='', alpha=0.7)
+    filtered_differences = scaled_differences[non_zero_mask]
+    filtered_region_names = [region_names[i] for i in range(len(region_names)) if non_zero_mask[i]]
+    x_pos = np.arange(len(filtered_differences))
+    fig, ax = plt.subplots(figsize=(18, 10))
+    colors = []
+    for i, region_name in enumerate(filtered_region_names):
+        region_title = region_name.replace('_', ' ').title()
+        if region_title in significant_regions:
+            colors.append('darkgreen' if filtered_differences[i] > 0 else 'darkred')
+        else:
+            colors.append('lightgreen' if filtered_differences[i] > 0 else 'lightcoral')
+    
+    bars = ax.bar(x_pos, filtered_differences, color=colors, alpha=0.8, edgecolor='black', linewidth=1)
+    ax.set_xlabel('Brain Region', fontsize=16, color='black', fontweight='bold')
+    ax.set_ylabel(f'Scaled Differences (×{SCALE_FACTOR})', fontsize=16, color='black', fontweight='bold')
+    ax.set_title('Statistical Analysis Results: Human vs LLM Brain Region Differences\n' +
+                f'{len(filtered_differences)} Regions with Non-Zero Differences (Dark colors = statistically significant, p<0.05)', 
+                fontsize=18, color='black', fontweight='bold')
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels([name.replace('_', ' ').title() for name in filtered_region_names], 
+                       rotation=45, ha='right', fontsize=12, color='black', fontweight='bold')
+    ax.tick_params(axis='y', labelsize=12, colors='black')
+    for label in ax.get_yticklabels():
+        label.set_fontweight('bold')
+    ax.grid(False)
+    ax.axhline(y=0, color='black', linestyle='-', alpha=0.8, linewidth=2)
+    for i, bar in enumerate(bars):
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., 
+                height + (0.002 if height > 0 else -0.004),
+                f'{filtered_differences[i]:.3f}', ha='center', 
+                va='bottom' if height > 0 else 'top', 
+                fontsize=10, color='black', fontweight='bold')
     plt.tight_layout()
-    plt.savefig('region_activations.png')
     plt.show()
+    return fig, ax
 
 
-if __name__ == "__main__":
+def main():
     df = pd.read_csv('BrainEmbeddings/dstc8.csv')
     df['Text'] = df['Text'].str.replace('"', '', regex=False).str.strip()
     df.dropna(subset=['Text'], inplace=True)
     user_texts = df[df['Input'] == 'USER']['Text'].tolist()[1:10000]
     system_texts = df[df['Input'] == 'SYSTEM']['Text'].tolist()[1:10000]
+    
+    user_results = run_emotion_mapping_analysis("Human", user_texts)
+    system_results = run_emotion_mapping_analysis("LLM", system_texts)
+    user_mapper, user_intensities, user_assignments = user_results
+    _, system_intensities, system_assignments = system_results
+    
+    all_region_names = list(user_mapper.emotion_regions.keys())
+    human_regional_means, llm_regional_means, significant_regions = perform_statistical_tests(
+        user_intensities, 
+        user_assignments, 
+        system_intensities, 
+        system_assignments, 
+        all_region_names
+    )
+    
+    print(f"Generated regional means for {len(human_regional_means)} regions")
+    print(f"Found {len(significant_regions)} statistically significant regions")
+    print(f"\n=== VALUES FOR VISUALIZATION CODE ===")
+    print("human_values = np.array([")
+    print("    " + ", ".join([f"{x:.6f}" for x in human_regional_means]))
+    print("])")
+    print("llm_values = np.array([")
+    print("    " + ", ".join([f"{x:.6f}" for x in llm_regional_means]))
+    print("])")
+    
+    user_emotion_range = np.sum(human_regional_means > 0.1)
+    system_emotion_range = np.sum(llm_regional_means > 0.1)
+    user_avg_intensity = np.mean(user_intensities)
+    system_avg_intensity = np.mean(system_intensities)
+    
+    print(f"\n=== EMOTIONALITY ANALYSIS: HUMAN vs. LLM ===")
+    print(f"Emotion Range (Active Regions Above Baseline):")
+    print(f"  - Human: {user_emotion_range} regions")
+    print(f"  - LLM:   {system_emotion_range} regions")
+    print("Average Emotion Intensity:")
+    print(f"  - Human: {user_avg_intensity:.3f}")
+    print(f"  - LLM:   {system_avg_intensity:.3f}")
 
-    user_results = run_emotion_mapping_analysis("USER", user_texts)
-    _, _, user_intensities, _, user_summary = user_results if user_results else (None,) * 5
-    system_results = run_emotion_mapping_analysis("SYSTEM", system_texts)
-    _, _, system_intensities, _, system_summary = system_results if system_results else (None,) * 5
+    fig, ax = create_differences_bar_plot(human_regional_means, llm_regional_means, 
+                                        all_region_names, significant_regions)
 
-    pos_mapper, pos_embeddings, pos_intensities, pos_assignments, pos_coords = user_results if user_results else (None,)*5
-    neg_mapper, neg_embeddings, neg_intensities, neg_assignments, neg_coords = system_results if system_results else (None,)*5
+    if fig is not None:
+        print(f"\nStatistically significant regions ({len(significant_regions)}):")
+        for region in significant_regions:
+            print(f"  - {region}")
+    else:
+        print("No significant differences found to visualize.")
 
-    if user_summary and system_summary and user_intensities is not None and system_intensities is not None:
-        all_region_names = list(pos_mapper.emotion_regions.keys())
-        pos_intensities_resampled, neg_intensities_resampled = perform_statistical_tests(
-            pos_intensities, 
-            pos_assignments, 
-            neg_intensities, 
-            neg_assignments, 
-            all_region_names
-        )
-        user_emotion_range = sum(1 for data in user_summary.values() if data['count'] > 0)
-        system_emotion_range = sum(1 for data in system_summary.values() if data['count'] > 0)
-        user_avg_intensity = np.mean(user_intensities)
-        system_avg_intensity = np.mean(system_intensities)
-        print("EMOTIONALITY ANALYSIS: Human vs. LLM:")
-        print(f"Emotion Range (Unique Regions Activated):")
-        print(f"  - Human:   {user_emotion_range} regions")
-        print(f"  - LLM: {system_emotion_range} regions")
-        print("Average Emotion Intensity:")
-        print(f"  - Human:   {user_avg_intensity:.3f}")
-        print(f"  - LLM: {system_avg_intensity:.3f}")
-        user_metrics = {'range': user_emotion_range, 'intensity': user_avg_intensity}
-        system_metrics = {'range': system_emotion_range, 'intensity': system_avg_intensity}
-        plot_brain_region_activations(user_summary, system_summary)
 
+if __name__ == "__main__":
+    main()

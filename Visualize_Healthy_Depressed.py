@@ -26,16 +26,16 @@ lh_names = {label.name.replace('-lh', ''): label for label in labels_lh_all if '
 rh_names = {label.name.replace('-rh', ''): label for label in labels_rh_all if 'unknown' not in label.name}
 common_keys = sorted(set(lh_names.keys()).intersection(rh_names.keys()))
 
-n_regions = 17
+n_regions = 29
 labels_lh = [lh_names[k] for k in common_keys][:n_regions]
 labels_rh = [rh_names[k] for k in common_keys][:n_regions]
 
 # these values are from manuscript tables, generated using the _Statistics.py code files
 healthy_values = np.array([
-    0.1, 0.1, 0.1, 0.1, 0.095, 0.1, 0.1, 0.1, 0.095, 0.1, 0.1, 0.0917, 0.1, 0.1, 0.1, 0.1, 0.1
+    0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.095000, 0.100000, 0.100000, 0.100000, 0.075000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.091667, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000
 ])
 depressed_values = np.array([
-    0.1, 0.1, 0.1, 0.0781, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.075, 0.1
+    0.100000, 0.100000, 0.100000, 0.100000, 0.078125, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.075000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.075000, 0.100000
 ])
 
 # calculate difference between these two lists
@@ -67,3 +67,5 @@ brain = stc_difference.plot(
     clim=dict(kind='value', lims=[0, 0.5, 1.0]),
     title='Healthy vs Depressed'
 )
+
+print("ok")

@@ -6,81 +6,19 @@ import re
 import numpy as np
 import pandas as pd
 from typing import List, Dict, Optional, Tuple
-from openai import OpenAI
+import matplotlib.pyplot as plt
 from scipy.spatial.distance import cdist
+from openai import OpenAI
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 from scipy import stats
 from sklearn.utils import resample
 
-def perform_statistical_tests(pos_intensities, pos_assignments, neg_intensities, neg_assignments, region_names):
-    # oversample the minority class
-    if len(pos_intensities) < len(neg_intensities):
-        pos_intensities_resampled = resample(pos_intensities, 
-                                           replace=True, 
-                                           n_samples=len(neg_intensities), 
-                                           random_state=42)
-        pos_assignments_resampled = resample(pos_assignments, 
-                                           replace=True, 
-                                           n_samples=len(neg_assignments), 
-                                           random_state=42)
-        neg_intensities_resampled = neg_intensities
-        neg_assignments_resampled = neg_assignments
-    else:
-        neg_intensities_resampled = resample(neg_intensities, 
-                                           replace=True, 
-                                           n_samples=len(pos_intensities), 
-                                           random_state=42)
-        neg_assignments_resampled = resample(neg_assignments, 
-                                           replace=True, 
-                                           n_samples=len(pos_assignments), 
-                                           random_state=42)
-        pos_intensities_resampled = pos_intensities
-        pos_assignments_resampled = pos_assignments
-    
-    u_stat, p_value = stats.mannwhitneyu(pos_intensities_resampled, neg_intensities_resampled, alternative='two-sided')
-    print(f"Healthy mean: {np.mean(pos_intensities_resampled):.4f} ± {np.std(pos_intensities_resampled):.4f}")
-    print(f"Depressed mean: {np.mean(neg_intensities_resampled):.4f} ± {np.std(neg_intensities_resampled):.4f}")
-    print(f"Mann-Whitney U statistic: {u_stat:.4f}, p-value: {p_value:.6f}")
-    print(f"Significant: {'YES' if p_value < 0.05 else 'NO'} (alpha = 0.05)")
-    
-    significant_regions = []
-    
-    for region_idx in range(len(region_names)):
-        pos_region_mask = pos_assignments_resampled == region_idx
-        neg_region_mask = neg_assignments_resampled == region_idx
-        pos_region_intensities = pos_intensities_resampled[pos_region_mask]
-        neg_region_intensities = neg_intensities_resampled[neg_region_mask]
-        
-        if len(pos_region_intensities) > 1 and len(neg_region_intensities) > 1:
-            try:
-                u_stat_region, p_value_region = stats.mannwhitneyu(pos_region_intensities, neg_region_intensities, alternative='two-sided')
-                region_name = region_names[region_idx].replace('_', ' ').title()
-                
-                print(f"{region_name}:")
-                print(f"Healthy: {len(pos_region_intensities)} texts, mean: {np.mean(pos_region_intensities):.4f}")
-                print(f"Depressed: {len(neg_region_intensities)} texts, mean: {np.mean(neg_region_intensities):.4f}")
-                print(f"Mann-Whitney U: {u_stat_region:.4f}, p-value: {p_value_region:.6f}")
-                
-                if p_value_region < 0.05:
-                    significant_regions.append(region_name)
-                    print(f"    *** SIGNIFICANT ***")
-            except ValueError:
-                continue
-    
-    print(f"Regions with significant differences ({len(significant_regions)}):")
-    for region in significant_regions:
-        print(f"  - {region}")
-    
-    return pos_intensities_resampled, neg_intensities_resampled
-
 
 def get_ada_embeddings(texts: List[str]) -> Optional[np.ndarray]:
-    api_key = "your open-ai api key here"
-    if not api_key:
-        print("Missing OpenAI API Key...")
-        return None
+    api_key = "your open-ai key here"
+
     try:
         client = OpenAI(api_key=api_key)
         response = client.embeddings.create(
@@ -92,7 +30,6 @@ def get_ada_embeddings(texts: List[str]) -> Optional[np.ndarray]:
         print(f"Error generating ADA embeddings: {e}")
         return None
 
-
 class EmotionBrainMapper:
     def __init__(self):
         self.emotion_regions = self.define_emotion_regions()
@@ -100,7 +37,6 @@ class EmotionBrainMapper:
         self.scaler = StandardScaler()
         self.pca = PCA(n_components=3)
         self.kmeans = KMeans(n_clusters=self.n_emotion_regions, random_state=42, n_init=10)
-        self.brain = None
 
     def define_emotion_regions(self) -> Dict[str, List[float]]:
         return {
@@ -240,8 +176,8 @@ def run_emotion_mapping_analysis(title: str, conversation: List[str]):
     np.random.seed(42)
     embeddings = get_ada_embeddings(conversation)
     if embeddings is None:
-        return None, None, None, None
-
+        return None
+    
     mapper = EmotionBrainMapper()
     brain_coords, region_assignments = mapper.fit_transform_embeddings(embeddings)
     emotion_intensities = mapper.estimate_emotion_intensity(conversation)
@@ -249,22 +185,168 @@ def run_emotion_mapping_analysis(title: str, conversation: List[str]):
     return mapper, embeddings, emotion_intensities, region_assignments, brain_coords
 
 
-if __name__ == "__main__":
-    df = pd.read_csv('BrainEmbeddings/diacwoz_data.csv', sep="\t")
+def perform_statistical_tests(pos_intensities, pos_assignments, neg_intensities, neg_assignments, region_names):
+    # Oversample the minority class
+    if len(pos_intensities) < len(neg_intensities):
+        pos_intensities_resampled = resample(pos_intensities, 
+                                           replace=True, 
+                                           n_samples=len(neg_intensities), 
+                                           random_state=42)
+        pos_assignments_resampled = resample(pos_assignments, 
+                                           replace=True, 
+                                           n_samples=len(neg_assignments), 
+                                           random_state=42)
+        neg_intensities_resampled = neg_intensities
+        neg_assignments_resampled = neg_assignments
+    else:
+        neg_intensities_resampled = resample(neg_intensities, 
+                                           replace=True, 
+                                           n_samples=len(pos_intensities), 
+                                           random_state=42)
+        neg_assignments_resampled = resample(neg_assignments, 
+                                           replace=True, 
+                                           n_samples=len(pos_assignments), 
+                                           random_state=42)
+        pos_intensities_resampled = pos_intensities
+        pos_assignments_resampled = pos_assignments
+    
+    # Calculate overall statistics
+    u_stat, p_value = stats.mannwhitneyu(pos_intensities_resampled, neg_intensities_resampled, alternative='two-sided')
+    print(f"Healthy mean: {np.mean(pos_intensities_resampled):.4f} ± {np.std(pos_intensities_resampled):.4f}")
+    print(f"Depressed mean: {np.mean(neg_intensities_resampled):.4f} ± {np.std(neg_intensities_resampled):.4f}")
+    print(f"Mann-Whitney U statistic: {u_stat:.4f}, p-value: {p_value:.6f}")
+    print(f"Significant: {'YES' if p_value < 0.05 else 'NO'} (alpha = 0.05)")
+    
+    # Calculate regional means - this is the key output for visualization
+    healthy_regional_means = []
+    depressed_regional_means = []
+    significant_regions = []
+    
+    for region_idx in range(len(region_names)):
+        pos_region_mask = pos_assignments_resampled == region_idx
+        neg_region_mask = neg_assignments_resampled == region_idx
+        pos_region_intensities = pos_intensities_resampled[pos_region_mask]
+        neg_region_intensities = neg_intensities_resampled[neg_region_mask]
+        
+        if len(pos_region_intensities) > 0 and len(neg_region_intensities) > 0:
+            healthy_mean = np.mean(pos_region_intensities)
+            depressed_mean = np.mean(neg_region_intensities)
+            healthy_regional_means.append(healthy_mean)
+            depressed_regional_means.append(depressed_mean)
+            region_name = region_names[region_idx].replace('_', ' ').title()
+            print(f"{region_name}:")
+            print(f"  Healthy: {len(pos_region_intensities)} texts, mean: {healthy_mean:.4f}")
+            print(f"  Depressed: {len(neg_region_intensities)} texts, mean: {depressed_mean:.4f}")
+            
+            if len(pos_region_intensities) > 1 and len(neg_region_intensities) > 1:
+                try:
+                    u_stat_region, p_value_region = stats.mannwhitneyu(pos_region_intensities, neg_region_intensities, alternative='two-sided')
+                    print(f"  Mann-Whitney U: {u_stat_region:.4f}, p-value: {p_value_region:.6f}")
+                    if p_value_region < 0.05:
+                        significant_regions.append(region_name)
+                        print(f"  *** SIGNIFICANT ***")
+                except ValueError:
+                    continue
+        else:
+            # Use baseline values for regions with no data
+            healthy_regional_means.append(0.1)
+            depressed_regional_means.append(0.1)
+    
+    print(f"Regions with significant differences ({len(significant_regions)}):")
+    for region in significant_regions:
+        print(f"  - {region}")
+    
+    return np.array(healthy_regional_means), np.array(depressed_regional_means), significant_regions
 
+
+def create_differences_bar_plot(healthy_values: np.ndarray, depressed_values: np.ndarray, 
+                               region_names: List[str], significant_regions: List[str]):
+    differences = healthy_values - depressed_values
+    SCALE_FACTOR = 50.0  # Amplify differences for visibility
+    scaled_differences = differences * SCALE_FACTOR
+    non_zero_mask = np.abs(scaled_differences) > 1e-6
+    if not np.any(non_zero_mask):
+        print("No non-zero differences found!")
+        return None, None
+    
+    filtered_differences = scaled_differences[non_zero_mask]
+    filtered_region_names = [region_names[i] for i in range(len(region_names)) if non_zero_mask[i]]
+    print(f"Showing {len(filtered_differences)} regions with non-zero differences (out of {len(region_names)} total)")
+
+    x_pos = np.arange(len(filtered_differences))
+    fig, ax = plt.subplots(figsize=(18, 10))
+    colors = []
+    for i, region_name in enumerate(filtered_region_names):
+        region_title = region_name.replace('_', ' ').title()
+        if region_title in significant_regions:
+            colors.append('darkgreen' if filtered_differences[i] > 0 else 'darkred')
+        else:
+            colors.append('lightgreen' if filtered_differences[i] > 0 else 'lightcoral')
+    
+    bars = ax.bar(x_pos, filtered_differences, color=colors, alpha=0.8, edgecolor='black', linewidth=1)
+    ax.set_xlabel('Brain Region', fontsize=16, color='black', fontweight='bold')
+    ax.set_ylabel(f'Scaled Differences (×{SCALE_FACTOR})', fontsize=16, color='black', fontweight='bold')
+    ax.set_title('Statistical Analysis Results: Healthy vs Depressed Brain Region Differences\n' +
+                f'{len(filtered_differences)} Regions with Non-Zero Differences (Dark colors = statistically significant, p<0.05)', 
+                fontsize=18, color='black', fontweight='bold')
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels([name.replace('_', ' ').title() for name in filtered_region_names], 
+                       rotation=45, ha='right', fontsize=12, color='black', fontweight='bold')
+    ax.tick_params(axis='y', labelsize=12, colors='black')
+    for label in ax.get_yticklabels():
+        label.set_fontweight('bold')
+    ax.grid(False)
+    ax.axhline(y=0, color='black', linestyle='-', alpha=0.8, linewidth=2)
+    for i, bar in enumerate(bars):
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., 
+                height + (0.002 if height > 0 else -0.004),
+                f'{filtered_differences[i]:.3f}', ha='center', 
+                va='bottom' if height > 0 else 'top', 
+                fontsize=10, color='black', fontweight='bold')
+    
+    plt.tight_layout()
+    plt.show()
+    return fig, ax
+
+
+def main():
+    df = pd.read_csv('BrainEmbeddings/diacwoz_data.csv', sep="\t")
     healthy_conversation = [text.replace('.', ' ') for text in df[df['label'] == 0]['text'].tolist()]
     depressed_conversation = [text.replace('.', ' ') for text in df[df['label'] == 1]['text'].tolist()]
+
     pos_results = run_emotion_mapping_analysis("Healthy", healthy_conversation)
     neg_results = run_emotion_mapping_analysis("Depressed", depressed_conversation)
-    pos_mapper, pos_embeddings, pos_intensities, pos_assignments, pos_coords = pos_results if pos_results else (None,)*5
-    neg_mapper, neg_embeddings, neg_intensities, neg_assignments, neg_coords = neg_results if neg_results else (None,)*5
-
-if pos_results and neg_results:
+    pos_mapper, _, pos_intensities, pos_assignments, _ = pos_results
+    _, _, neg_intensities, neg_assignments, _ = neg_results
     all_region_names = list(pos_mapper.emotion_regions.keys())
-    pos_intensities_resampled, neg_intensities_resampled = perform_statistical_tests(
+    healthy_regional_means, depressed_regional_means, significant_regions = perform_statistical_tests(
         pos_intensities, 
         pos_assignments, 
         neg_intensities, 
         neg_assignments, 
         all_region_names
     )
+
+    print(f"Generated regional means for {len(healthy_regional_means)} regions")
+    print(f"Found {len(significant_regions)} statistically significant regions")
+    
+    # These are the values that should replace the hardcoded arrays in the visualization
+    print("healthy_values = np.array([")
+    print("    " + ", ".join([f"{x:.6f}" for x in healthy_regional_means]))
+    print("])")
+    print("depressed_values = np.array([")
+    print("    " + ", ".join([f"{x:.6f}" for x in depressed_regional_means]))
+    print("])")
+    
+    fig, ax = create_differences_bar_plot(healthy_regional_means, depressed_regional_means, 
+                                        all_region_names, significant_regions)
+    if fig is not None:
+        print(f"Statistically significant regions ({len(significant_regions)}):")
+        for region in significant_regions:
+            print(f"  - {region}")
+    else:
+        print("No significant differences found to visualize.")
+
+if __name__ == "__main__":
+    main()
