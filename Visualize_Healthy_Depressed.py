@@ -30,42 +30,61 @@ n_regions = 29
 labels_lh = [lh_names[k] for k in common_keys][:n_regions]
 labels_rh = [rh_names[k] for k in common_keys][:n_regions]
 
-# these values are from manuscript tables, generated using the _Statistics.py code files
+# Values from manuscript tables
 healthy_values = np.array([
-    0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.095000, 0.100000, 0.100000, 0.100000, 0.075000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.091667, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000
+    0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.095000, 0.100000, 0.100000, 
+    0.100000, 0.075000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 
+    0.100000, 0.091667, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 
+    0.100000, 0.100000, 0.100000, 0.100000, 0.100000
 ])
 depressed_values = np.array([
-    0.100000, 0.100000, 0.100000, 0.100000, 0.078125, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.075000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.075000, 0.100000
+    0.100000, 0.100000, 0.100000, 0.100000, 0.078125, 0.100000, 0.100000, 0.100000, 
+    0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 
+    0.100000, 0.100000, 0.075000, 0.100000, 0.100000, 0.100000, 0.100000, 0.100000, 
+    0.100000, 0.100000, 0.100000, 0.075000, 0.100000
 ])
 
-# calculate difference between these two lists
-difference_values = healthy_values - depressed_values
-difference_values[difference_values < 0] = 0
-max_diff = difference_values.max()
-if max_diff > 0:
-    scaled_difference_values = difference_values / max_diff
-else:
-    scaled_difference_values = difference_values
+def create_brain_map(values, labels_lh, labels_rh, n_vertices_lh, n_vertices_rh):
+    brain_map = np.zeros(n_vertices_lh + n_vertices_rh)
+    for i, label in enumerate(labels_lh):
+        brain_map[label.vertices] = values[i]
+    for i, label in enumerate(labels_rh):
+        offset = n_vertices_lh
+        brain_map[label.vertices + offset] = values[i]
+    return brain_map
 
-brain_map_difference = np.zeros(n_vertices_lh + n_vertices_rh)
-for i, label in enumerate(labels_lh):
-    brain_map_difference[label.vertices] = scaled_difference_values[i]
-for i, label in enumerate(labels_rh):
-    offset = n_vertices_lh
-    brain_map_difference[label.vertices + offset] = scaled_difference_values[i]
+brain_map_healthy = create_brain_map(healthy_values, labels_lh, labels_rh, n_vertices_lh, n_vertices_rh)
+brain_map_depressed = create_brain_map(depressed_values, labels_lh, labels_rh, n_vertices_lh, n_vertices_rh)
 
-stc_difference = mne.SourceEstimate(brain_map_difference, vertices=vertices, tmin=0, tstep=1, subject=subject)
+def normalize(values):
+    return (values - values.min()) / (values.max() - values.min())
+
+brain_map_healthy = create_brain_map(normalize(healthy_values), labels_lh, labels_rh, n_vertices_lh, n_vertices_rh)
+brain_map_depressed = create_brain_map(normalize(depressed_values), labels_lh, labels_rh, n_vertices_lh, n_vertices_rh)
+
+stc_healthy = mne.SourceEstimate(brain_map_healthy, vertices=vertices, tmin=0, tstep=1, subject=subject)
+stc_depressed = mne.SourceEstimate(brain_map_depressed, vertices=vertices, tmin=0, tstep=1, subject=subject)
+
 cmap = LinearSegmentedColormap.from_list('white_red', ['white', '#ff0000'])
 
-brain = stc_difference.plot(
+brain_healthy = stc_healthy.plot(
     subject=subject,
     subjects_dir=subjects_dir,
     hemi='both',
     surface='inflated',
     time_viewer=True,
     colormap=cmap,
-    clim=dict(kind='value', lims=[0, 0.5, 1.0]),
-    title='Healthy vs Depressed'
+    clim=dict(kind='value', lims=[0.0, 0.05, 0.1]),
+    title='Activations - Healthy Subjects'
 )
 
-print("ok")
+brain_depressed = stc_depressed.plot(
+    subject=subject,
+    subjects_dir=subjects_dir,
+    hemi='both',
+    surface='inflated',
+    time_viewer=True,
+    colormap=cmap,
+    clim=dict(kind='value', lims=[0.0, 0.05, 0.1]),
+    title='Activations - Depressed Subjects'
+)
