@@ -17,7 +17,7 @@ from sklearn.utils import resample
 
 
 def get_ada_embeddings(texts: List[str]) -> Optional[np.ndarray]:
-    api_key = "your open-ai key here"
+    api_key = "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"
 
     try:
         client = OpenAI(api_key=api_key)
