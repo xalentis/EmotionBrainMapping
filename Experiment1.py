@@ -204,7 +204,7 @@ def run_emotion_mapping_analysis(title: str, conversation: List[str]):
 
 
 if __name__ == "__main__":
-    df = pd.read_csv('BrainEmbeddings/diacwoz_data.csv', sep="\t")
+    df = pd.read_csv('diacwoz_data.csv', sep="\t")
 
     healthy_conversation = [text.replace('.', ' ') for text in df[df['label'] == 0]['text'].tolist()]
     depressed_conversation = [text.replace('.', ' ') for text in df[df['label'] == 1]['text'].tolist()]

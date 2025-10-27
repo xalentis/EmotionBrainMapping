@@ -12,25 +12,33 @@ from scipy.spatial.distance import cdist
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
+import matplotlib.pyplot as plt
 
+api_key = "your open-ai api key here"
 
 def get_ada_embeddings(texts: List[str]) -> Optional[np.ndarray]:
-    api_key = "your open-ai api key here"
     if not api_key:
-        print("Missing OpenAI API Key...")
+        print("Missing OpenAI API Key.")
         return None
+
     try:
         client = OpenAI(api_key=api_key)
+        if isinstance(texts, str):
+            texts = [texts]
+
         response = client.embeddings.create(
             model="text-embedding-ada-002",
-            input=texts,
-
+            input=texts
         )
-        return np.array([item.embedding for item in response.data])
-    except Exception as e:
-        print(f"Error generating ADA embeddings: {e}")
-        return None
 
+        data = getattr(response, "data", None) or response.get("data")
+        embeddings = [item.embedding if hasattr(item, "embedding") else item["embedding"] for item in data]
+        return np.array(embeddings)
+
+    except Exception as e:
+        print("Error generating ADA embeddings:")
+        return None
+    
 
 class EmotionBrainMapper:
     def __init__(self, n_emotion_regions=25):
@@ -73,6 +81,7 @@ class EmotionBrainMapper:
             'posterior_cingulate': [0, -50, 25],
             'medial_prefrontal_cortex': [0, 45, 20]
         }
+    
 
     def fit_transform_embeddings(self, embeddings: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         if embeddings.shape[0] == 0:
@@ -116,6 +125,7 @@ class EmotionBrainMapper:
         region_assignments_mapped = np.array([cluster_to_region[c] for c in region_assignments])
         brain_coordinates = region_coords_map[region_assignments_mapped].copy()
         return brain_coordinates, region_assignments
+
 
     def estimate_emotion_intensity(self, texts: List[str]) -> np.ndarray:
         word_scores = {
@@ -179,10 +189,17 @@ def run_emotion_mapping_analysis(title: str, conversation: List[str]):
     
     _, region_assignments = mapper.fit_transform_embeddings(embeddings)
     emotion_intensities = mapper.estimate_emotion_intensity(conversation)
+    
+    pca_variance = mapper.pca.explained_variance_ratio_
+    total_pca_variance = np.sum(pca_variance)
+    
     report = {
         'avg_intensity': np.mean(emotion_intensities),
-        'region_mapping': {}
+        'region_mapping': {},
+        'pca_variance_explained': total_pca_variance,
+        'pca_variance_per_component': pca_variance
     }
+
     region_names = list(mapper.emotion_regions.keys())
     unique_regions, counts = np.unique(region_assignments, return_counts=True)
     for region_idx, count in zip(unique_regions, counts):
@@ -206,7 +223,13 @@ if __name__ == "__main__":
         "remorse", "sadness", "surprise", "neutral"
     ]
 
-    df = pd.read_csv('BrainEmbeddings/emotions27.tsv', sep="\t")
+    try:
+        df = pd.read_csv('emotions27.tsv', sep="\t")
+    except FileNotFoundError:
+        print("Error: 'emotions27.tsv' not found.")
+        print("Please ensure the file is in the correct directory.")
+        exit()
+        
     df.columns = ["text", "label", "id"]
     df.drop(columns=["id"], inplace=True)
     all_results = {}
@@ -214,6 +237,11 @@ if __name__ == "__main__":
     for emotion_name in emotions:
         emotion_index = str(emotions.index(emotion_name))
         emotion_texts = df[df["label"] == emotion_index]["text"].astype(str).tolist()
+        
+        if not emotion_texts:
+            print(f"Warning: No texts found for emotion '{emotion_name}'. Skipping.")
+            continue
+            
         results = run_emotion_mapping_analysis(emotion_name, emotion_texts)
         if results:
             all_results[emotion_name] = results
@@ -236,9 +264,35 @@ if __name__ == "__main__":
             print(f"{region.replace('_', ' ').title()}:")
             print(f"  - Associated with: {', '.join(mapped_emotions)}")
 
+    print("\n--- PCA Variance Explained Summary ---")
+    all_pca_variances = [
+        (emotion, data['pca_variance_explained'])
+        for emotion, data in all_results.items()
+        if 'pca_variance_explained' in data
+    ]
+    if all_pca_variances:
+        avg_pca_variance = np.mean([var for _, var in all_pca_variances])
+        print(f"Average total variance explained by PCA (up to 3 components) across all emotion-specific analyses: {avg_pca_variance:.2%}")
+
     print("Overall Emotion Intensity Summary:")
     sorted_intensities = sorted(all_results.items(), key=lambda item: item[1]['avg_intensity'], reverse=True)
     
     print("Emotion                      Average Intensity")
     for emotion, data in sorted_intensities:
         print(f"{emotion:<27}  {data['avg_intensity']:.3f}")
+
+
+    top_10_intensities = sorted_intensities[:10]
+    emotions_top_10 = [item[0] for item in top_10_intensities][::-1]
+    intensities_top_10 = [item[1]['avg_intensity'] for item in top_10_intensities][::-1]
+    
+    plt.figure(figsize=(10, 7))
+    colors = plt.cm.viridis(np.linspace(0.4, 0.9, len(intensities_top_10)))
+    plt.barh(emotions_top_10, intensities_top_10, color=colors)
+    plt.xlabel('Average Intensity Score', fontsize=12)
+    plt.ylabel('Emotion', fontsize=12)
+    plt.title('Top 10 Emotions by Average Intensity', fontsize=14, fontweight='bold')
+    plt.grid(axis='x', linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    print("Displaying plot. Close the plot window to continue...")
+    plt.show()
